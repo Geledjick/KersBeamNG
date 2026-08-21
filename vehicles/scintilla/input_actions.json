@@ -1,0 +1,10 @@
+{
+  "kers_boost": {
+    "title": "KERS Boost",
+    "desc": "Press to get POWER!",
+    "order": 1,
+    "isBasic": true,
+    "ctx": "vlua",
+    "onChange": "electrics.values.kersBoost = VALUE"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "KERS Display",
+  "author": "Gelendjic",
+  "version": "1.0",
+  "description": "Displays KERS battery level, torque output/regen, and boost state.",
+  "directive": "kersWidget",
+  "domElement": "<kers-widget></kers-widget>",
+  "domTypes": ["UI"],
+  "types": ["ui.apps.categories.vehicle_info"],
+  "css": {},
+  "size": {"x": 2, "y": 2}
+}

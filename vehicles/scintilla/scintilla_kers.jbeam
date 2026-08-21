@@ -1,0 +1,45 @@
+{
+  "scintilla_kers": {
+    "information": {
+      "authors": "Gelendjic",
+      "name": "KERS Hybrid System",
+      "value": 5000
+    },
+    "slotType": "scintilla_mod",
+
+    "controller": [
+      ["fileName"],
+      ["kersController"]
+    ],
+
+    "energyStorage": [
+      ["type", "name"],
+      ["electricBattery", "kers_battery"]
+    ],
+    "kers_battery": {
+      "energyType": "electricEnergy",
+      "batteryCapacity": 2,
+      "startingCapacity": 2
+    },
+
+    "actionsEnabled": [
+      ["id"],
+      ["kers_boost"]
+    ],
+
+    "mainEngine": {
+      "numberOfOutputPorts": 2
+    },
+    "powertrain": [
+      ["type", "name", "inputName", "inputIndex"],
+      ["kersMotor", "kers_motor", "mainEngine", 2]
+    ],
+    "kers_motor": {
+      "torqueRating": 300,
+      "commandName": "kersTorqueCommand",
+      "energyStorage": "kers_battery",
+      "inertia": 0.05,
+      "gearRatio": 1
+    }
+  }
+}

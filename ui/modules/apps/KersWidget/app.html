@@ -1,0 +1,42 @@
+<div class="bngApp" style="width: 100%; height: 100%; background: rgba(0, 0, 0, 0.85); color: #fff; padding: 10px; box-sizing: border-box; border-radius: 8px; font-family: sans-serif;">
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+    <span style="font-weight: bold; font-size: 13px; letter-spacing: 1px;">KERS SYSTEM</span>
+    
+    <span style="padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold;"
+          ng-style="{
+            'background-color': motorStatus === 'BOOSTING' ? '#00ff66' : (motorStatus === 'REGEN' ? '#ff9900' : (motorStatus === 'DEPLETED' ? '#ff3333' : (motorStatus === 'FULL' ? '#00ccff' : '#444'))),
+            'color': (motorStatus === 'DEPLETED' || motorStatus === 'READY') ? '#fff' : '#000'
+          }">
+      {{ motorStatus }}
+    </span>
+  </div>
+
+  <div style="margin-bottom: 8px;">
+    <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 3px; color: #ccc;">
+      <span>BATTERY</span>
+      <span>{{ batteryPercent }}% ({{ energykWh }} kWh)</span>
+    </div>
+    <div style="width: 100%; background: #222; height: 10px; border-radius: 3px; overflow: hidden;">
+      <div ng-style="{'width': batteryPercent + '%', 'background-color': batteryPercent > 20 ? '#00ccff' : '#ff3333'}"
+           style="height: 100%; transition: width 0.1s linear;"></div>
+    </div>
+  </div>
+
+  <div>
+    <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 3px; color: #ccc;">
+      <span>POWER / REGEN</span>
+      <span>{{ torquePercent }}%</span>
+    </div>
+    <div style="width: 100%; background: #222; height: 10px; border-radius: 3px; position: relative; overflow: hidden;">
+      <div style="position: absolute; left: 50%; width: 2px; height: 100%; background: #555; z-index: 1;"></div>
+      
+      <div ng-if="torquePercent >= 0"
+           ng-style="{'left': '50%', 'width': (torquePercent / 2) + '%', 'background-color': '#00ff66'}"
+           style="position: absolute; height: 100%; transition: width 0.05s linear;"></div>
+      
+      <div ng-if="torquePercent < 0"
+           ng-style="{'left': (50 + (torquePercent / 2)) + '%', 'width': (-torquePercent / 2) + '%', 'background-color': '#ff9900'}"
+           style="position: absolute; height: 100%; transition: width 0.05s linear;"></div>
+    </div>
+  </div>
+</div>
