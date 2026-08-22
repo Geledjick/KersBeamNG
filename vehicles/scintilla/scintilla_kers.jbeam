@@ -42,11 +42,23 @@
       ["kersMotor", "kers_motor", "mainEngine", 2]
     ],
     "kers_motor": {
-      "torqueRating": "$kers_torque",
       "commandName": "kersTorqueCommand",
       "energyStorage": "kers_battery",
-      "inertia": 0.05,
-      "gearRatio": "$kers_gear_ratio"
+      "inertia": 0.1,
+      "gearRatio": "$kers_gear_ratio",
+      "electricalEfficiency": 0.92,
+
+      "torque": [
+        ["rpm", "torque"],
+        [0,     "$=$kers_torque * 0.85"],
+        [4000,  "$=$kers_torque * 1.0" ],
+        [8000,  "$=$kers_torque * 0.95"],
+        [11000, "$=$kers_torque * 0.85"],
+        [14000, "$=$kers_torque * 0.7" ],
+        [16000, "$=$kers_torque * 0.4" ],
+        [18000, "$=$kers_torque * 0.1" ],
+        [20000, 0                      ]
+      ]
     },
 
     "nodes": [

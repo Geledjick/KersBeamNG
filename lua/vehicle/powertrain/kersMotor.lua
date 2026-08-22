@@ -73,7 +73,7 @@ local function registerStorage(device, storageName)
 end
 
 local function updateVelocity(device, dt)
-  if device.parent then
+  if device.parent.outputAV1 then
     device.inputAV = device.parent.outputAV1 * device.gearRatio
   end
 end
@@ -138,7 +138,7 @@ local function validate(device)
 end
 
 local function calculateInertia(device)
-  device.cumulativeInertia = (device.virtualInertia or 0.05) / (device.gearRatio * device.gearRatio)
+  device.cumulativeInertia = (device.virtualInertia or 0.05) * (device.gearRatio * device.gearRatio)
   device.invCumulativeInertia = device.cumulativeInertia > 0 and 1 / device.cumulativeInertia or 0
   device.cumulativeGearRatio = device.gearRatio
   device.maxCumulativeGearRatio = device.gearRatio
@@ -165,11 +165,12 @@ local function new(jbeamData)
     inputIndex = jbeamData.inputIndex or 2,
     gearRatio = jbeamData.gearRatio or 1,
     virtualInertia = jbeamData.inertia or 0.05,
+    additionalEngineInertia = (jbeamData.inertia or 0.05) * ((jbeamData.gearRatio or 1) * (jbeamData.gearRatio or 1)),
     cumulativeInertia = 1,
     invCumulativeInertia = 1,
     cumulativeGearRatio = 1,
     maxCumulativeGearRatio = 1,
-    isPhysicallyDisconnected = true,
+    isPhysicallyDisconnected = false,
 
     inputAV = 0,
     outputRPM = 0,
@@ -187,7 +188,7 @@ local function new(jbeamData)
     spentEnergy = 0,
 
     commandName = jbeamData.commandName or "kersTorqueCommand",
-    torqueSmoother = newExponentialSmoothing(jbeamData.smoothing or 15),
+    torqueSmoother = newExponentialSmoothing(jbeamData.smoothing or 100),
 
     reset = reset,
     validate = validate,
