@@ -72,7 +72,7 @@ local function updateFixedStep(dt)
     end
   elseif brakeInput > 0.05 and throttleInput < 0.1 then
     if batteryRatio < 0.99 then
-      targetTorque = -kersPeakTorque * clamp(2 * brakeInput, 0, 1)
+      targetTorque = -kersPeakTorque * brakeInput
       status = "REGEN"
     else
       status = "FULL"

@@ -220,6 +220,8 @@ local function new(jbeamData)
     points = {}
     for _, v in pairs(rt) do table.insert(points, {v.rpm, v.torque}) end
     device.regenCurve = createCurve(points)
+  elseif #points ~= 0 then
+    device.regenCurve = device.torqueCurve
   else
     local maxRegenTorque = jbeamData.maxRegenTorque or jbeamData.torqueRating or 300
     device.regenCurve = {[0] = 0}
