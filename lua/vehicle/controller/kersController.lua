@@ -6,6 +6,8 @@ M.defaultOrder = 1000
 local kersMotor = nil
 local kersBattery = nil
 
+local clamp = clamp
+
 local function updateFixedStep(dt)
   if not kersMotor then
     kersMotor = powertrain.getDevice("kers_motor")
@@ -22,7 +24,6 @@ local function updateFixedStep(dt)
 
   local batteryRatio = kersBattery and kersBattery.remainingRatio or 0
   local maxTorque = kersMotor.jbeamData.torqueRating or 300
-  local maxRegenTorque = kersMotor.jbeamData.maxRegenTorque or maxTorque
 
   local targetTorque = 0
   local status = "READY"
@@ -36,7 +37,7 @@ local function updateFixedStep(dt)
     end
   elseif brakeInput > 0.05 and throttleInput < 0.1 then
     if batteryRatio < 0.99 then
-      targetTorque = -maxRegenTorque
+      targetTorque = -maxTorque * clamp(2 * brakeInput, 0, 1)
       status = "REGEN"
     else
       status = "FULL"

@@ -7,6 +7,13 @@
     },
     "slotType": "scintilla_mod",
 
+    "variables": [
+      ["name", "type", "unit", "category", "default", "min", "max", "title", "description"],
+      ["$kers_torque", "range", "N·m", "KERS Tuning", 300, 50, 1000, "Motor Torque", " ", {"stepDis": 25}],
+      ["$kers_battery_capacity", "range", "kWh", "KERS Tuning", 2, 1, 10, "Battery Capacity", " ", {"stepDis": 0.5}],
+      ["$kers_gear_ratio", "range", ":1", "KERS Tuning", 1, 0.1, 3, "Gear Ratio", " ", {"stepDis": 0.05}]
+    ],
+
     "controller": [
       ["fileName"],
       ["kersController"]
@@ -18,8 +25,8 @@
     ],
     "kers_battery": {
       "energyType": "electricEnergy",
-      "batteryCapacity": 2,
-      "startingCapacity": 2
+      "batteryCapacity": "$kers_battery_capacity",
+      "startingCapacity": "$kers_battery_capacity"
     },
 
     "actionsEnabled": [
@@ -35,11 +42,30 @@
       ["kersMotor", "kers_motor", "mainEngine", 2]
     ],
     "kers_motor": {
-      "torqueRating": 300,
+      "torqueRating": "$kers_torque",
       "commandName": "kersTorqueCommand",
       "energyStorage": "kers_battery",
       "inertia": 0.05,
-      "gearRatio": 1
-    }
+      "gearRatio": "$kers_gear_ratio"
+    },
+
+    "nodes": [
+      ["id", "posX", "posY", "posZ"],
+      {"selfCollision": false},
+      {"collision": false},
+      {"nodeWeight": "$=($kers_torque * 0.1) + ($kers_battery_capacity * 8)"},
+      {"group": ""},
+      ["kers_mass_node", 0.0, 1.2, 0.35]
+    ],
+    "beams": [
+      ["id1:", "id2:"],
+      {"beamPrecompression": 1, "beamType": "|NORMAL", "beamLongBound": 1.0, "beamShortBound": 1.0},
+      {"beamSpring": 2001000, "beamDamp": 100},
+      {"beamDeform": 150000, "beamStrength": "FLT_MAX"},
+      ["kers_mass_node", "e1r"],
+      ["kers_mass_node", "e1l"],
+      ["kers_mass_node", "e2r"],
+      ["kers_mass_node", "e2l"]
+    ]
   }
 }
