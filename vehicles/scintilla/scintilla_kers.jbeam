@@ -44,7 +44,7 @@
     "kers_motor": {
       "commandName": "kersTorqueCommand",
       "energyStorage": "kers_battery",
-      "inertia": 0.000001,
+      "inertia": 0.0000001,
       "gearRatio": "$kers_gear_ratio",
       "electricalEfficiency": 0.92,
 

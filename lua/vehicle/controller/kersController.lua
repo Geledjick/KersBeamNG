@@ -6,7 +6,10 @@ M.defaultOrder = 1000
 local kersMotor = nil
 local kersBattery = nil
 
+local mainEngine = nil
+
 local kersPeakTorque = 0
+local kersIdleChargeTorque = 20
 
 local max = math.max
 local abs = math.abs
@@ -44,6 +47,45 @@ local function boostSiblingClutchCapacity(device)
   end
 end
 
+local function getRegenTaper(engine)
+  if engine.isStalled then
+    return 0
+  end
+
+  local idleAV = engine.idleAV or 0
+  if idleAV <= 0 then
+    return 1
+  end
+
+  local engineAV = engine.outputAV1 or 0
+  local regenSafeAV = idleAV * 1.25
+  local regenCutoffAV = idleAV * 0.75
+
+  return clamp((engineAV - regenCutoffAV) / (regenSafeAV - regenCutoffAV), 0, 1)
+end
+
+local function getIdleChargeTaper(engine)
+  if engine.isStalled then
+    return 0
+  end
+
+  local idleAV = engine.idleAV or 0
+  if idleAV <= 0 then
+    return 0
+  end
+
+  local engineAV = engine.outputAV1 or 0
+  local floorAV = idleAV * 0.85
+  local ceilAV = idleAV * 1.6
+  local rampAV = idleAV * 0.15
+
+  if engineAV < floorAV or engineAV > ceilAV then
+    return 0
+  end
+
+  return clamp((engineAV - floorAV) / rampAV, 0, 1)
+end
+
 local function updateFixedStep(dt)
   if not kersMotor then
     kersMotor = powertrain.getDevice("kers_motor")
@@ -51,12 +93,16 @@ local function updateFixedStep(dt)
   if not kersBattery then
     kersBattery = energyStorage.getStorage("kers_battery")
   end
+  if not mainEngine then
+    mainEngine = kersMotor.parent
+  end
 
-  if not kersMotor or not kersBattery then return end
+  if not kersMotor or not kersBattery or not mainEngine then return end
 
   local boostInput = electrics.values.kersBoost or 0
   local brakeInput = electrics.values.brake or 0
   local throttleInput = electrics.values.throttle or 0
+  local wheelSpeed = obj:getVelocity():length()
 
   local batteryRatio = kersBattery and kersBattery.remainingRatio or 0
 
@@ -70,10 +116,21 @@ local function updateFixedStep(dt)
     else
       status = "DEPLETED"
     end
-  elseif brakeInput > 0.05 and throttleInput < 0.1 then
+  elseif wheelSpeed > 0.5 then
+    if brakeInput > 0.05 and throttleInput < 0.1 then
+      if batteryRatio < 0.99 then
+        local regenTaper = getRegenTaper(mainEngine)
+        targetTorque = -kersPeakTorque * brakeInput * regenTaper
+        status = regenTaper > 0.01 and "REGEN" or "REGEN BLOCKED"     
+      else
+        status = "FULL"
+      end
+    end
+  else
     if batteryRatio < 0.99 then
-      targetTorque = -kersPeakTorque * brakeInput
-      status = "REGEN"
+      local idleTaper = getIdleChargeTaper(mainEngine)
+      targetTorque = -kersIdleChargeTorque * idleTaper
+      status = idleTaper > 0.01 and "IDLE CHARGE" or "READY"
     else
       status = "FULL"
     end
