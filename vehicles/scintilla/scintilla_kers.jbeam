@@ -46,7 +46,6 @@
       "energyStorage": "kers_battery",
       "inertia": 0.0000001,
       "gearRatio": "$kers_gear_ratio",
-      "electricalEfficiency": 0.92,
 
       "torque": [
         ["rpm", "torque"],
@@ -59,6 +58,16 @@
         [18000, "$=$kers_torque * 0.1" ],
         [20000, 0                      ]
       ],
+
+      "electricalEfficiencyCurve": [
+        ["load", "efficiency"],
+        [0,   0.82],
+        [10,  0.89],
+        [25,  0.94],
+        [50,  0.97],
+        [75,  0.95],
+        [100, 0.92]
+      ]
     },
 
     "nodes": [

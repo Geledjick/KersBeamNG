@@ -9,6 +9,7 @@ local abs = math.abs
 local floor = math.floor
 local clamp = clamp
 
+-- Converting rad/s to rpm: 60 / (2*pi)
 local avToRPM = 9.549296596425384
 
 local function updateEnergyStorageRatios(device)
@@ -23,6 +24,8 @@ local function updateEnergyStorageRatios(device)
   end
 end
 
+-- Distributes the accumulated energy consumption/income per tick (device.spentEnergy)
+-- across all registered batteries proportionally to their number.
 local function updateEnergyUsage(device)
   if #device.registeredEnergyStorages == 0 then
     device.spentEnergy = 0
@@ -39,6 +42,8 @@ local function updateEnergyUsage(device)
       
       storage.storedEnergy = clamp(storage.storedEnergy - (device.spentEnergy * storageRatio), 0, storage.energyCapacity)
       
+      -- Tracking zero-crossings to correctly calculate storageWithEnergyCounter
+      -- (how much energy the batteries can actually supply right now).
       if previous > 0 and storage.storedEnergy <= 0 then
         device.storageWithEnergyCounter = device.storageWithEnergyCounter - 1
       elseif previous <= 0 and storage.storedEnergy > 0 then
@@ -72,8 +77,11 @@ local function registerStorage(device, storageName)
   end
 end
 
+-- Kinematics: The KERS shaft rotates faster/slower than the crankshaft.
+-- in gearRatio times. device.parent.outputAV1 may be missing in the first few ticks.
+-- Until the powertrain tree is fully assembled, hence the double check.
 local function updateVelocity(device, dt)
-  if device.parent.outputAV1 then
+  if device.parent and device.parent.outputAV1 then
     device.inputAV = device.parent.outputAV1 * device.gearRatio
   end
 end
@@ -96,12 +104,21 @@ local function updateTorque(device, dt)
   cmd = device.torqueSmoother:get(cmd)
   device.currentTorque = cmd
 
+  -- Torque moves "up the tree" to the engine, also scaling with gearRatio
+  -- down speed x gearRatio, up torque x gearRatio,
+  -- otherwise power wouldn't be conserved through the gearing).
   device.torqueDiff = -cmd * device.gearRatio
 
   local grossWork = cmd * inputAV * dt
-  local loadForEff = clamp(abs(cmd) / (maxAssist + 1e-30), 0, 1)
-  local eff = device.electricalEfficiencyTable[floor(loadForEff * 100) * 0.01] or device.electricalEfficiency
+
+  -- Take the efficiency from the load curve (0-100%), from electricalEfficiencyCurve
+  local loadPercent = clamp(abs(cmd) / (maxAssist + 1e-30), 0, 1) * 100
+  local eff = (device.electricalEfficiencyCurve and device.electricalEfficiencyCurve[floor(loadPercent)]) or 0
   
+  -- Efficiency asymmetry: during acceleration (grossWork >= 0), we expend more energy than
+  -- useful mechanical work (division); during recuperation (grossWork < 0),
+  -- less energy enters the battery than is removed from the shaft (multiplication). This simulates
+  -- real losses in the electronics/windings in both directions of the energy flow.
   device.spentEnergy = device.spentEnergy + (grossWork >= 0 and grossWork / eff or grossWork * eff)
 end
 
@@ -137,6 +154,9 @@ local function validate(device)
   return true
 end
 
+-- Rotor inertia reflected on the crankshaft: I_equiv = I_rotor * gearRatio * gearRatio
+-- (rotational energy is conserved when transitioning through a rigid gear
+-- see the discussion history for a detailed analysis of the formula direction).
 local function calculateInertia(device)
   device.cumulativeInertia = (device.virtualInertia or 0.05) * (device.gearRatio * device.gearRatio)
   device.invCumulativeInertia = device.cumulativeInertia > 0 and 1 / device.cumulativeInertia or 0
@@ -164,12 +184,20 @@ local function new(jbeamData)
     inputName = jbeamData.inputName,
     inputIndex = jbeamData.inputIndex or 2,
     gearRatio = jbeamData.gearRatio or 1,
+    
+    -- Inform the engine about the mass of the rotor, which is rigidly bolted to its shaft,
+    -- so that the engine correctly calculates the total inertia during acceleration/braking by torque
+    -- (without this field, the engine "doesn't see" the mass of the KERS at all).
     virtualInertia = jbeamData.inertia or 0.05,
     additionalEngineInertia = (jbeamData.inertia or 0.05) * ((jbeamData.gearRatio or 1) * (jbeamData.gearRatio or 1)),
     cumulativeInertia = 1,
     invCumulativeInertia = 1,
+    
     cumulativeGearRatio = 1,
     maxCumulativeGearRatio = 1,
+
+    -- The rigid link is always "connected" the device doesn't have a slip model,
+    -- so this flag should always be false.
     isPhysicallyDisconnected = false,
 
     inputAV = 0,
@@ -199,46 +227,47 @@ local function new(jbeamData)
     registerStorage = registerStorage,
   }
 
-  local torqueTable = jbeamData.torque and tableFromHeaderTable(jbeamData.torque) or {}
+  -- Torque is set by the rpm/torque map from jbeam.
   local points = {}
   device.maxRPM = 0
-  for _, v in pairs(torqueTable) do
-    table.insert(points, {v.rpm, v.torque})
-    device.maxRPM = max(device.maxRPM, v.rpm)
+  if jbeamData.torque then
+    local torqueTable = tableFromHeaderTable(jbeamData.torque)
+    for _, v in pairs(torqueTable) do
+      table.insert(points, {v.rpm, v.torque})
+      device.maxRPM = max(device.maxRPM, v.rpm)
+    end    
   end
 
   if #points == 0 then
-    local rating = jbeamData.torqueRating or 300
-    local maxRPM = jbeamData.maxRPM or 10000
-    device.maxRPM = maxRPM
-    points = {{0, rating}, {maxRPM, rating}}
+    log("E", "kersMotor.new", "Device hasn't torque table in jbeamData!")
+    device.maxRPM = 1
+    points = {{0, 0}, {1, 0}}
   end
   device.torqueCurve = createCurve(points)
 
-  if jbeamData.regenTorqueCurve then
-    local rt = tableFromHeaderTable(jbeamData.regenTorqueCurve)
-    points = {}
-    for _, v in pairs(rt) do table.insert(points, {v.rpm, v.torque}) end
-    device.regenCurve = createCurve(points)
-  elseif #points ~= 0 then
-    device.regenCurve = device.torqueCurve
+  -- Without a separate recovery curve, use the same form as acceleration.
+  if jbeamData.regenTorque then
+    local rt = tableFromHeaderTable(jbeamData.regenTorque)
+    local regenPoints = {}
+    for _, v in pairs(rt) do table.insert(regenPoints, {v.rpm, v.torque}) end
+    device.regenCurve = createCurve(regenPoints)
   else
-    local maxRegenTorque = jbeamData.maxRegenTorque or jbeamData.torqueRating or 300
-    device.regenCurve = {[0] = 0}
-    for i = 1, device.maxRPM do
-      local fade = min(1, i / 500)
-      device.regenCurve[i] = fade * maxRegenTorque
-    end
+    device.regenCurve = device.torqueCurve
   end
 
   local maxRegen = 0
   for i = 0, device.maxRPM do maxRegen = max(maxRegen, device.regenCurve[i] or 0) end
   device.maxWantedRegenTorque = jbeamData.maxRegenTorque or maxRegen
 
-  local eff = jbeamData.electricalEfficiency or 0.95
-  device.electricalEfficiency = eff
-  device.electricalEfficiencyTable = {}
-  for k = 0, 100 do device.electricalEfficiencyTable[k * 0.01] = eff end
+  -- Electrical efficiency is set by the load/efficiency map from jbeam.
+  if jbeamData.electricalEfficiencyCurve then
+    local effTable = tableFromHeaderTable(jbeamData.electricalEfficiencyCurve)
+    local effPoints = {}
+    for _, v in pairs(effTable) do table.insert(effPoints, {v.load, v.efficiency}) end
+    device.electricalEfficiencyCurve = createCurve(effPoints)
+  else
+    log("E", "kersMotor.new", "Device hasn't electricalEfficiencyCurve table in jbeamData!")
+  end
 
   device.energyStorage = jbeamData.energyStorage
   device.jbeamData = jbeamData

@@ -9,12 +9,26 @@ local kersBattery = nil
 local mainEngine = nil
 
 local kersPeakTorque = 0
-local kersIdleChargeTorque = 20
+local kersIdleChargeTorque = 0
 
 local max = math.max
 local abs = math.abs
 local clamp = clamp
 
+local CLUTCH_TORQUE_MARGIN = 1.25         -- clutch safety margin above peak KERS torque
+local IDLE_CHARGE_RATIO = 0.1             -- percentage of peak KERS torque for background charging
+local REGEN_CUTOFF_RATIO = 0.75           -- below this percentage of idle, regeneration is disabled
+local REGEN_SAFE_RATIO = 1.25             -- above this percentage of idle, regeneration is fully enabled
+local IDLE_CHARGE_FLOOR_RATIO = 0.85      -- lower boundary of the recharge window (percentage of idle)
+local IDLE_CHARGE_RAMP_RATIO = 0.15       -- ramp width at the lower boundary
+local STATIONARY_SPEED = 0.5
+local BATTERY_FULL = 0.99
+local BATTERY_EMPTY = 0.01
+local BRAKE_DEADZONE = 0.05
+local THROTTLE_DEADZONE = 0.1
+
+-- Peak KERS torque across the entire RPM range 
+-- take the maximum from the device torque curve (createCurve).
 local function getPeakTorque(device)
   local peak = 0
   for k, v in pairs(device.torqueCurve) do
@@ -22,9 +36,13 @@ local function getPeakTorque(device)
       peak = max(peak, v)
     end
   end
-  return peak
+  return max(peak, 0.0000001) -- protection against division by 0 when the curve is completely empty
 end
 
+-- Universal torque capacity boost for a "neighboring" clutchlike device
+-- (stock clutch, DCT, or any modded transmission with a lockTorque field).
+-- Works without being tied to a part name—it searches based on the presence of the required fields,
+-- so it won't break on third-party modded transmissions.
 local function boostSiblingClutchCapacity(device)
   if not device or not device.parent or not device.parent.children then
     return
@@ -38,7 +56,7 @@ local function boostSiblingClutchCapacity(device)
         sibling.baseLockTorque = sibling.lockTorque
       end
 
-      sibling.lockTorque = sibling.baseLockTorque + kersTorqueAtCrank * 1.25
+      sibling.lockTorque = sibling.baseLockTorque + kersTorqueAtCrank * CLUTCH_TORQUE_MARGIN
 
       if sibling.calculateInertia then
         sibling:calculateInertia()
@@ -47,6 +65,9 @@ local function boostSiblingClutchCapacity(device)
   end
 end
 
+-- Permissible recuperation coefficient under braking: 1 = fully permitted,
+-- 0 = prohibited (RPM too close to idle/zero). Without this protection
+-- recuperation in neutral/close to idle can drag the RPM down.
 local function getRegenTaper(engine)
   if engine.isStalled then
     return 0
@@ -58,12 +79,15 @@ local function getRegenTaper(engine)
   end
 
   local engineAV = engine.outputAV1 or 0
-  local regenSafeAV = idleAV * 1.25
-  local regenCutoffAV = idleAV * 0.75
+  local regenSafeAV = idleAV * REGEN_SAFE_RATIO
+  local regenCutoffAV = idleAV * REGEN_CUTOFF_RATIO
 
   return clamp((engineAV - regenCutoffAV) / (regenSafeAV - regenCutoffAV), 0, 1)
 end
 
+-- Background charging coefficient at idle/neutral/pitstop: operates
+-- in a narrow window around idle speed, where the engine is definitely not strained
+-- to carry a small additional load or full load in high rpm.
 local function getIdleChargeTaper(engine)
   if engine.isStalled then
     return 0
@@ -75,28 +99,14 @@ local function getIdleChargeTaper(engine)
   end
 
   local engineAV = engine.outputAV1 or 0
-  local floorAV = idleAV * 0.85
-  local ceilAV = idleAV * 1.6
-  local rampAV = idleAV * 0.15
-
-  if engineAV < floorAV or engineAV > ceilAV then
-    return 0
-  end
+  local floorAV = idleAV * IDLE_CHARGE_FLOOR_RATIO
+  local rampAV = idleAV * IDLE_CHARGE_RAMP_RATIO
 
   return clamp((engineAV - floorAV) / rampAV, 0, 1)
 end
 
 local function updateFixedStep(dt)
-  if not kersMotor then
-    kersMotor = powertrain.getDevice("kers_motor")
-  end
-  if not kersBattery then
-    kersBattery = energyStorage.getStorage("kers_battery")
-  end
-  if not mainEngine then
-    mainEngine = kersMotor.parent
-  end
-
+  -- Skip if the necessary parts are not available
   if not kersMotor or not kersBattery or not mainEngine then return end
 
   local boostInput = electrics.values.kersBoost or 0
@@ -104,21 +114,23 @@ local function updateFixedStep(dt)
   local throttleInput = electrics.values.throttle or 0
   local wheelSpeed = obj:getVelocity():length()
 
-  local batteryRatio = kersBattery and kersBattery.remainingRatio or 0
+  local batteryRatio = kersBattery.remainingRatio or 0
 
   local targetTorque = 0
   local status = "READY"
 
   if boostInput > 0 then
-    if batteryRatio > 0.01 then
+    -- Boost is a priority and is always available, regardless of speed.
+    if batteryRatio > BATTERY_EMPTY then
       targetTorque = kersPeakTorque * boostInput
       status = "BOOSTING"
     else
       status = "DEPLETED"
     end
-  elseif wheelSpeed > 0.5 then
-    if brakeInput > 0.05 and throttleInput < 0.1 then
-      if batteryRatio < 0.99 then
+  elseif wheelSpeed > STATIONARY_SPEED then
+    -- The car is moving: recuperation under the brake, without throttle.
+    if brakeInput > BRAKE_DEADZONE and throttleInput < THROTTLE_DEADZONE then
+      if batteryRatio < BATTERY_FULL then
         local regenTaper = getRegenTaper(mainEngine)
         targetTorque = -kersPeakTorque * brakeInput * regenTaper
         status = regenTaper > 0.01 and "REGEN" or "REGEN BLOCKED"     
@@ -127,10 +139,20 @@ local function updateFixedStep(dt)
       end
     end
   else
-    if batteryRatio < 0.99 then
-      local idleTaper = getIdleChargeTaper(mainEngine)
-      targetTorque = -kersIdleChargeTorque * idleTaper
-      status = idleTaper > 0.01 and "IDLE CHARGE" or "READY"
+    -- The car is at idle/neutral/pitstop - background charging.
+    -- or accelerated recharging if throttle while standing still.
+    if batteryRatio < BATTERY_FULL then
+      local revTaper = getIdleChargeTaper(mainEngine)
+      local chargeRatio = max(IDLE_CHARGE_RATIO, throttleInput)
+      targetTorque = -kersPeakTorque * chargeRatio * revTaper
+
+      if revTaper <= 0.01 then
+        status = "READY"
+      elseif chargeRatio > IDLE_CHARGE_RATIO + 0.01 then
+        status = "FAST CHARGE"
+      else
+        status = "IDLE CHARGE"
+      end
     else
       status = "FULL"
     end
@@ -139,6 +161,7 @@ local function updateFixedStep(dt)
   local commandName = kersMotor.commandName or "kersTorqueCommand"
   electrics.values[commandName] = targetTorque
 
+  -- Send datas to the HUD
   electrics.values.kersBatteryPercent = batteryRatio * 100
   electrics.values.kersEnergykWh = kersBattery and (kersBattery.storedEnergy / 3600000) or 0
   electrics.values.kersTorquePercent = (targetTorque / kersPeakTorque) * 100
@@ -154,12 +177,18 @@ local function init(jbeamData)
 end
 
 local function initSecondStage(jbeamData)
+  -- Checking for the required parts
   kersMotor = powertrain.getDevice("kers_motor")
+  if kersMotor then
+    mainEngine = kersMotor.parent
+  end
   kersBattery = energyStorage.getStorage("kers_battery")
+
   electrics.values.kersBoost = electrics.values.kersBoost or 0
 
   if kersMotor then
     kersPeakTorque = getPeakTorque(kersMotor)
+    kersIdleChargeTorque = kersPeakTorque * IDLE_CHARGE_RATIO
     boostSiblingClutchCapacity(kersMotor)
   end
 end
